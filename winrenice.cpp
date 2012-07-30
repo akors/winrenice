@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <iostream>
-#include <map>
 #include <vector>
 #include <cstdlib>
 
@@ -9,16 +8,59 @@
 
 std::ostream& dout = std::cout; // debug output stream
 
-static std::map<DWORD, const std::string> PRIORITYCLASS_MAP = {
-    {IDLE_PRIORITY_CLASS, "IDLE"},
-    {BELOW_NORMAL_PRIORITY_CLASS, "BELOWNORMAL"},
-    {NORMAL_PRIORITY_CLASS, "NORMAL"},
-    {ABOVE_NORMAL_PRIORITY_CLASS, "ABOVENORMAL"},
-    {HIGH_PRIORITY_CLASS, "HIGH"},
-    {REALTIME_PRIORITY_CLASS, "REALTIME"}
+struct PriorityClass {
+    int baseprio;
+    const char* name;
+    DWORD symbol;
 };
 
-const auto PRIORITYCLASS_MAP_END = PRIORITYCLASS_MAP.end();
+static const PriorityClass PRIORITYCLASSES[] = {
+    {4, "IDLE", IDLE_PRIORITY_CLASS},
+    {6, "BELOWNORMAL", BELOW_NORMAL_PRIORITY_CLASS},
+    {8, "NORMAL", NORMAL_PRIORITY_CLASS},
+    {10, "ABOVENORMAL", ABOVE_NORMAL_PRIORITY_CLASS},
+    {13, "HIGH", HIGH_PRIORITY_CLASS},
+    {24, "REALTIME", REALTIME_PRIORITY_CLASS},
+};
+
+const std::size_t PRIORITYCLASSES_LENGTH = 
+    sizeof(PRIORITYCLASSES)/sizeof(PriorityClass);
+
+const PriorityClass* PRIORITYCLASSES_END =
+    PRIORITYCLASSES + PRIORITYCLASSES_LENGTH;
+
+
+
+const PriorityClass* get_priorityclass(const char* name)
+{    
+    const PriorityClass *it = PRIORITYCLASSES;
+    for (; it < PRIORITYCLASSES_END; ++it)
+        if (!strcmp(name, it->name)) return it;
+    
+    return it;
+}
+
+const PriorityClass* get_priorityclass(DWORD symbol)
+{    
+    const PriorityClass *it = PRIORITYCLASSES;
+    for (; it < PRIORITYCLASSES_END; ++it)
+        if (symbol == it->symbol) return it;
+    
+    return it;
+}
+
+const PriorityClass* incdec_priorityclass(
+    const PriorityClass* current_class,
+    int incdec_by
+)
+{
+    const PriorityClass* new_class = current_class + incdec_by;
+    
+    if (new_class < PRIORITYCLASSES) return PRIORITYCLASSES;
+    else if (new_class >= PRIORITYCLASSES_END) return PRIORITYCLASSES_END - 1;
+    else
+        return new_class;
+}
 
 DWORD cerr_last_error()
 {
@@ -260,7 +302,7 @@ void renice_one(
     }
     
     std::cout<<"Setting process "<<pid<<" to priority class "<<
-        PRIORITYCLASS_MAP[prio]<<".\n";
+        get_priorityclass(prio)->name<<".\n";
 
 before_exit:
     CloseHandle(process);
@@ -309,14 +351,14 @@ int main(int argc, char *argv[])
                 c = toupper(c);
 
             // find priority class
-            auto p = find_value(PRIORITYCLASS_MAP, priostring_capitalized);
-            if (p == PRIORITYCLASS_MAP_END)
+            auto p = get_priorityclass(priostring_capitalized.c_str());
+            if (p == PRIORITYCLASSES_END)
             {
                 std::cerr<<"Unknown priority class "<<po.priostring<<".\n";
                 return EXIT_FAILURE;
             }
 
-            prio_numerical = p->first;
+            prio_numerical = p->symbol;
             
             break;
         }
