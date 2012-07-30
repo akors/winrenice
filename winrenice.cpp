@@ -140,7 +140,6 @@ struct ProgramOptions
 
     enum class ReniceWhat {
         pid,
-        exe_one,
         exe_all
     } what;
 
@@ -202,12 +201,6 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
         
         if (get_switch(argv[currArg]) == 'e')
         {
-            po.what = ProgramOptions::ReniceWhat::exe_one;
-            continue;
-        }
-        
-        if (get_switch(argv[currArg]) == 'a')
-        {
             po.what = ProgramOptions::ReniceWhat::exe_all;
             continue;
         }
@@ -268,8 +261,7 @@ std::string get_process_module_name(DWORD pid)
 
 void renice_one(
     DWORD pid,
-    DWORD prio,
-    const ProgramOptions& po
+    DWORD prio
 )
 {
     // get a handle to the process
@@ -284,17 +276,7 @@ void renice_one(
         cerr_last_error();
         return;
     }
-    
-    
-    if(po.how == ProgramOptions::ReniceHow::increase)
-    {
-        
-    }
-    else if(po.how == ProgramOptions::ReniceHow::decrease)
-    {
-        
-    }
-    
+
     if (!SetPriorityClass(process, prio))
     {
         std::cerr<<"Failed to set priority class for process "<<pid<<". ";
@@ -305,6 +287,57 @@ void renice_one(
         get_priorityclass(prio)->name<<".\n";
 
 before_exit:
+    CloseHandle(process);
+}
+
+void incremental_renice_one(
+    DWORD pid,
+    int incdec_by
+)
+{
+    // get a handle to the process
+    HANDLE process = OpenProcess(
+        PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, // The access to the process object.
+        false, // If this value is TRUE, processes created by this process will inherit the handle.
+        pid // The identifier of the local process to be opened. 
+    );
+    if(process == NULL)
+    {
+        std::cerr<<"Failed to open process "<<pid<<". ";
+        cerr_last_error();
+        return;
+    }
+
+
+    DWORD prio = GetPriorityClass(process);
+    if (prio == 0)
+    {
+        std::cerr<<"Failed to retrieve priority class for process "<<pid<<". ";
+        cerr_last_error();
+        CloseHandle(process);
+        return;
+    }
+    
+    auto pp = get_priorityclass(prio);
+    if (pp == PRIORITYCLASSES_END)
+    {
+        std::cerr<<"Unknown priority class returned for process "<<pid<<". ";
+        CloseHandle(process);
+        return;
+    }
+
+    pp = incdec_priorityclass(pp, incdec_by);
+    prio = pp->symbol;
+
+    if (!SetPriorityClass(process, prio))
+    {
+        std::cerr<<"Failed to set priority class for process "<<pid<<". ";
+        cerr_last_error();
+    }
+
+    std::cout<<"Setting process "<<pid<<" to priority class "<<
+        get_priorityclass(prio)->name<<".\n";
+
     CloseHandle(process);
 }
 
@@ -339,8 +372,50 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
     
+    
+    // get all PID'S
+    std::vector<DWORD> all_pids = get_all_pids();
+    if (all_pids.empty())
+        return cerr_last_error();
+    
+    // vector for the target PID's
+    std::vector<DWORD> target_pids;
+
+    switch(po.what)
+    {
+        case ProgramOptions::ReniceWhat::pid:
+        {
+            const char *nptr = po.whatstring.c_str();
+            char *endptr;
+            DWORD pid = strtoul(nptr, &endptr, 10);
+            if (endptr == nptr)
+            {
+                std::cerr<<"Process ID must be numerical. "
+                    "Add /E or /A switch to look up a process by its executable name.";
+                return EXIT_FAILURE;
+            }
+            
+            if (all_pids.end() == std::find(all_pids.begin(), all_pids.end(), pid))
+            {
+                std::cerr<<"Process with ID "<<pid<<" does not exist.\n";
+                return EXIT_FAILURE;
+            }
+
+            target_pids.push_back(pid);
+            break;
+        }
+        case ProgramOptions::ReniceWhat::exe_all:
+        {
+            for(DWORD pid: all_pids)
+                if (get_process_module_name(pid) == po.whatstring)
+                    target_pids.push_back(pid);
+
+            break;
+        }
+    }
+
+
     // set numerical priority depending on command line arguments
-    DWORD prio_numerical;
     switch(po.how)
     {
         case ProgramOptions::ReniceHow::set:
@@ -357,8 +432,9 @@ int main(int argc, char *argv[])
                 std::cerr<<"Unknown priority class "<<po.priostring<<".\n";
                 return EXIT_FAILURE;
             }
-
-            prio_numerical = p->symbol;
+    
+            for(DWORD pid: target_pids)
+                renice_one(pid, p->symbol);
             
             break;
         }
@@ -367,67 +443,24 @@ int main(int argc, char *argv[])
         {
             const char *nptr = po.priostring.c_str();
             char *endptr;
-            prio_numerical = strtoul(nptr, &endptr, 10);
+            int prio_incdec = strtoul(nptr, &endptr, 10);
             if (endptr == nptr)
             {
                 std::cerr<<"Priority for increasing or decreasing must be numerical.";
                 return EXIT_FAILURE;
             }
             
+            if(po.how == ProgramOptions::ReniceHow::decrease)
+                prio_incdec = -prio_incdec;
+            
+            for(DWORD pid: target_pids)
+                incremental_renice_one(pid, prio_incdec);
+            
             break;
         }
     }
     
-    // get all PID'S
-    std::vector<DWORD> processIds = get_all_pids();
-    if (processIds.empty())
-        return cerr_last_error();
-
-    switch(po.what)
-    {
-        case ProgramOptions::ReniceWhat::pid:
-        {
-            const char *nptr = po.whatstring.c_str();
-            char *endptr;
-            DWORD target_pid = strtoul(nptr, &endptr, 10);
-            if (endptr == nptr)
-            {
-                std::cerr<<"Process ID must be numerical. "
-                    "Add /E or /A switch to look up a process by its executable name.";
-                return EXIT_FAILURE;
-            }
-            
-            if (processIds.end() == std::find(processIds.begin(), processIds.end(), target_pid))
-            {
-                std::cerr<<"Process with ID "<<target_pid<<" does not exist.\n";
-                return EXIT_FAILURE;
-            }
-
-            renice_one(target_pid, prio_numerical, po);
-
-            break;
-        }
-        case ProgramOptions::ReniceWhat::exe_one:
-        {
-            std::cerr<<"Sorry, not implemented.\n";
-            return EXIT_FAILURE;
-            break;
-        }
-        case ProgramOptions::ReniceWhat::exe_all:
-        {
-            std::vector<DWORD> matching_processIds;
-        
-            for(DWORD pid: processIds)
-                if (get_process_module_name(pid) == po.whatstring)
-                    matching_processIds.push_back(pid);
-            
-            for(DWORD pid: matching_processIds)
-                renice_one(pid, prio_numerical, po);
-
-
-            break;
-        }
-    }
+   
 
     return EXIT_SUCCESS;
 }
