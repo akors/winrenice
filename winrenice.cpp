@@ -9,7 +9,7 @@
 
 std::ostream& dout = std::cout; // debug output stream
 
-static std::map<DWORD, const std::string> PRIORITICLASS_MAP = {
+static std::map<DWORD, const std::string> PRIORITYCLASS_MAP = {
     {IDLE_PRIORITY_CLASS, "IDLE"},
     {BELOW_NORMAL_PRIORITY_CLASS, "BELOWNORMAL"},
     {NORMAL_PRIORITY_CLASS, "NORMAL"},
@@ -18,7 +18,7 @@ static std::map<DWORD, const std::string> PRIORITICLASS_MAP = {
     {REALTIME_PRIORITY_CLASS, "REALTIME"}
 };
 
-const auto PRIORITICLASS_MAP_END = PRIORITICLASS_MAP.end();
+const auto PRIORITYCLASS_MAP_END = PRIORITYCLASS_MAP.end();
 
 DWORD cerr_last_error()
 {
@@ -36,7 +36,7 @@ DWORD cerr_last_error()
         0, NULL
     ); 
     
-    std::cerr<<static_cast<LPCTSTR>(lpMsgBuf);
+    std::cerr<<"Error "<<lastError<<": "<<static_cast<LPCTSTR>(lpMsgBuf);
 
     LocalFree(lpMsgBuf);
     
@@ -68,8 +68,11 @@ std::vector<DWORD> get_all_pids()
             return std::vector<DWORD>();
     }
     
-    dout<<"Enumerating processes succeeded. Number of processes: "<<
-        bytesReturned/sizeof(DWORD)<<'\n';
+    // reset to correct size
+    processIds.resize(bytesReturned/sizeof(DWORD));
+    
+    //dout<<"Enumerating processes succeeded. Number of processes: "<<
+    //    bytesReturned/sizeof(DWORD)<<'\n';
         
     return processIds;
 }
@@ -163,7 +166,7 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
         
         if (get_switch(argv[currArg]) == 'a')
         {
-            po.what = ProgramOptions::ReniceWhat::exe_one;
+            po.what = ProgramOptions::ReniceWhat::exe_all;
             continue;
         }
         
@@ -194,7 +197,38 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
     return true;
 }
 
-void renice_one(DWORD pid, DWORD prio, const ProgramOptions& po)
+std::string get_process_module_name(DWORD pid)
+{
+    HANDLE process = OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, // The access to the process object.
+        false, // If this value is TRUE, processes created by this process will inherit the handle.
+        pid // The identifier of the local process to be opened. 
+    );
+    if(process == NULL)
+        return std::string();
+
+    const std::size_t BASENAME_MAX = 512;
+    char lpBaseName[BASENAME_MAX];
+    
+    std::size_t len = GetModuleBaseName(process,NULL, lpBaseName, BASENAME_MAX);
+    if (!len)
+    {
+        std::cerr<<"Failed to retrieve executable name for process "
+            <<pid<<". ";
+        cerr_last_error();
+        return std::string();
+    }
+        
+    // dout<<"Executable name of process "<<pid<<" is. "<<lpBaseName<<'\n';
+
+    return lpBaseName;
+}
+
+void renice_one(
+    DWORD pid,
+    DWORD prio,
+    const ProgramOptions& po
+)
 {
     // get a handle to the process
     HANDLE process = OpenProcess(
@@ -202,14 +236,14 @@ void renice_one(DWORD pid, DWORD prio, const ProgramOptions& po)
         false, // If this value is TRUE, processes created by this process will inherit the handle.
         pid // The identifier of the local process to be opened. 
     );
-    
     if(process == NULL)
     {
-        std::cerr<<"Failed to open process "<<pid<<": ";
+        std::cerr<<"Failed to open process "<<pid<<". ";
         cerr_last_error();
         return;
     }
-
+    
+    
     if(po.how == ProgramOptions::ReniceHow::increase)
     {
         
@@ -221,10 +255,14 @@ void renice_one(DWORD pid, DWORD prio, const ProgramOptions& po)
     
     if (!SetPriorityClass(process, prio))
     {
-        std::cerr<<"Failed to set priority class for process "<<pid<<": ";
+        std::cerr<<"Failed to set priority class for process "<<pid<<". ";
         cerr_last_error();
     }
+    
+    std::cout<<"Setting process "<<pid<<" to priority class "<<
+        PRIORITYCLASS_MAP[prio]<<".\n";
 
+before_exit:
     CloseHandle(process);
 }
 
@@ -271,8 +309,8 @@ int main(int argc, char *argv[])
                 c = toupper(c);
 
             // find priority class
-            auto p = find_value(PRIORITICLASS_MAP, priostring_capitalized);
-            if (p == PRIORITICLASS_MAP_END)
+            auto p = find_value(PRIORITYCLASS_MAP, priostring_capitalized);
+            if (p == PRIORITYCLASS_MAP_END)
             {
                 std::cerr<<"Unknown priority class "<<po.priostring<<".\n";
                 return EXIT_FAILURE;
@@ -331,11 +369,20 @@ int main(int argc, char *argv[])
         {
             std::cerr<<"Sorry, not implemented.\n";
             return EXIT_FAILURE;
+            break;
         }
         case ProgramOptions::ReniceWhat::exe_all:
         {
-            std::cerr<<"Sorry, not implemented.\n";
-            return EXIT_FAILURE;
+            std::vector<DWORD> matching_processIds;
+        
+            for(DWORD pid: processIds)
+                if (get_process_module_name(pid) == po.whatstring)
+                    matching_processIds.push_back(pid);
+            
+            for(DWORD pid: matching_processIds)
+                renice_one(pid, prio_numerical, po);
+
+
             break;
         }
     }
