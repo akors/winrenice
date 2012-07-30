@@ -6,7 +6,31 @@
 #include <windows.h>
 #include <Psapi.h>
 
-std::ostream& dout = std::cout; // debug output stream
+// thanks to http://stackoverflow.com/a/2886589
+struct ci_char_traits : public std::char_traits<char> {
+    static bool eq(char c1, char c2) { return toupper(c1) == toupper(c2); }
+    static bool ne(char c1, char c2) { return toupper(c1) != toupper(c2); }
+    static bool lt(char c1, char c2) { return toupper(c1) <  toupper(c2); }
+    static int compare(const char* s1, const char* s2, size_t n) {
+        while( n-- != 0 ) {
+            if( toupper(*s1) < toupper(*s2) ) return -1;
+            if( toupper(*s1) > toupper(*s2) ) return 1;
+            ++s1; ++s2;
+        }
+        return 0;
+    }
+    static const char* find(const char* s, int n, char a) {
+        while( n-- > 0 && toupper(*s) != toupper(a) ) {
+            ++s;
+        }
+        return s;
+    }
+};
+
+typedef std::basic_string<char, ci_char_traits> ci_string;
+
+std::ostream& operator << (std::ostream& os, const ci_string& s)
+{ return os<<s.c_str(); }
 
 struct PriorityClass {
     int baseprio;
@@ -31,11 +55,11 @@ const PriorityClass* PRIORITYCLASSES_END =
 
 
 
-const PriorityClass* get_priorityclass(const char* name)
+const PriorityClass* get_priorityclass(const ci_string& name)
 {    
     const PriorityClass *it = PRIORITYCLASSES;
     for (; it < PRIORITYCLASSES_END; ++it)
-        if (!strcmp(name, it->name)) return it;
+        if (name == it->name) return it;
     
     return it;
 }
@@ -100,7 +124,7 @@ std::vector<DWORD> get_all_pids()
     while(bytesReturned == maxArraySize*sizeof(DWORD))
     {
         maxArraySize <<= 1;
-        dout<<"Size for PID Array was insufficient. Retrying with "<<
+        std::clog<<"Size for PID Array was insufficient. Retrying with "<<
             maxArraySize * sizeof(DWORD)<<" bytes \n";
 
         // reallocate with appropriate size
@@ -113,7 +137,7 @@ std::vector<DWORD> get_all_pids()
     // reset to correct size
     processIds.resize(bytesReturned/sizeof(DWORD));
     
-    //dout<<"Enumerating processes succeeded. Number of processes: "<<
+    //std::clog<<"Enumerating processes succeeded. Number of processes: "<<
     //    bytesReturned/sizeof(DWORD)<<'\n';
         
     return processIds;
@@ -144,7 +168,7 @@ struct ProgramOptions
     } what;
         
     DWORD target_pid;
-    std::string target_str;
+    ci_string target_str;
 
     enum class ReniceHow {
         set,
@@ -171,8 +195,8 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
     po.what = ProgramOptions::ReniceWhat::pid;
     po.how = ProgramOptions::ReniceHow::set;
     
-    std::string priostring;
-    std::string whatstring;
+    ci_string priostring;
+    ci_string whatstring;
 
     unsigned positional = 0;
     for (int currArg = 1; currArg < argc ; ++currArg)
@@ -254,16 +278,11 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
     {
         case ProgramOptions::ReniceHow::set:
         {
-            // capitalize 
-            std::string priostring_capitalized = priostring;
-            for (char& c: priostring_capitalized)
-                c = toupper(c);
-
             // find priority class
-            auto p = get_priorityclass(priostring_capitalized.c_str());
+            auto p = get_priorityclass(priostring);
             if (p == PRIORITYCLASSES_END)
             {
-                std::cerr<<"Unknown priority class "<<priostring<<".\n";
+                std::cerr<<"Priority class "<<priostring<<" uknown.\n";
                 return false;
             }
             
@@ -314,7 +333,7 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
     return true;
 }
 
-std::string get_process_module_name(DWORD pid)
+ci_string get_process_module_name(DWORD pid)
 {
     HANDLE process = OpenProcess(
         PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, // The access to the process object.
@@ -322,7 +341,7 @@ std::string get_process_module_name(DWORD pid)
         pid // The identifier of the local process to be opened. 
     );
     if(process == NULL)
-        return std::string();
+        return ci_string();
 
     const std::size_t BASENAME_MAX = 512;
     char lpBaseName[BASENAME_MAX];
@@ -333,7 +352,7 @@ std::string get_process_module_name(DWORD pid)
         std::cerr<<"Failed to retrieve executable name for process "
             <<pid<<". ";
         cerr_last_error();
-        return std::string();
+        return ci_string();
     }
         
     // dout<<"Executable name of process "<<pid<<" is. "<<lpBaseName<<'\n';
