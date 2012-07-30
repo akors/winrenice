@@ -307,7 +307,6 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
         case ProgramOptions::ReniceWhat::exe_all:
         {
             po.target_str = whatstring;
-            std::cout<<"after\n";
             break;
         }
     }
@@ -486,6 +485,12 @@ int main(int argc, char *argv[])
                 if (get_process_module_name(pid) == po.target_str)
                     target_pids.push_back(pid);
 
+            if (target_pids.empty())
+            {
+                std::cerr<<"No processes with executable "<<po.target_str<<" found.\n";
+                return EXIT_FAILURE;
+            }
+            
             break;
         }
     }
