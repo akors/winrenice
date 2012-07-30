@@ -142,15 +142,20 @@ struct ProgramOptions
         pid,
         exe_all
     } what;
+        
+    DWORD target_pid;
+    std::string target_str;
 
     enum class ReniceHow {
         set,
         increase,
         decrease
     } how;
-    
-    std::string whatstring;
-    std::string priostring;
+
+    union {
+        DWORD set;
+        int incdec;
+    } priority;
 };
 
 inline char get_switch(const char* arg)
@@ -166,6 +171,9 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
     po.what = ProgramOptions::ReniceWhat::pid;
     po.how = ProgramOptions::ReniceHow::set;
     
+    std::string priostring;
+    std::string whatstring;
+
     unsigned positional = 0;
     for (int currArg = 1; currArg < argc ; ++currArg)
     {    
@@ -205,10 +213,17 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
             continue;
         }
         
+        // anything else is not accepted
+        if (get_switch(argv[currArg]))
+        {
+            std::cerr<<"Unknown option \""<<argv[currArg]<<"\"\n";
+            return false;
+        }
+        
         // first argument is the priority
         if (positional == 0)
         {
-            po.priostring = argv[currArg];
+            priostring = argv[currArg];
             ++positional;
             continue;
         }
@@ -216,19 +231,87 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
         // second argument is the target
         if (positional == 1)
         {
-            po.whatstring = argv[currArg];
+            whatstring = argv[currArg];
             ++positional;
             continue;
         }
     }
     
-    // if we didn't get at least two positional arguments, it's not enough
+    // if we didn't get two positional arguments, it's not correct
     if (positional < 2)
     {
         std::cerr<<"Not enough input arguments given.\n";
         return false;
     }
-    
+    else if( positional > 2)
+    {
+        std::cerr<<"Too many input arguments given.\n";
+        return false;
+    }
+
+    // interpret the "how" argument depending on input arguments
+    switch (po.how)
+    {
+        case ProgramOptions::ReniceHow::set:
+        {
+            // capitalize 
+            std::string priostring_capitalized = priostring;
+            for (char& c: priostring_capitalized)
+                c = toupper(c);
+
+            // find priority class
+            auto p = get_priorityclass(priostring_capitalized.c_str());
+            if (p == PRIORITYCLASSES_END)
+            {
+                std::cerr<<"Unknown priority class "<<priostring<<".\n";
+                return false;
+            }
+            
+            po.priority.set = p->symbol;
+            break;
+        }
+        case ProgramOptions::ReniceHow::increase:
+        case ProgramOptions::ReniceHow::decrease:
+        {
+            const char *nptr = priostring.c_str();
+            char *endptr;
+            po.priority.incdec = strtoul(nptr, &endptr, 10);
+            if (endptr == nptr)
+            {
+                std::cerr<<"Priority for increasing or decreasing must be numerical.";
+                return false;
+            }
+            
+            if(po.how == ProgramOptions::ReniceHow::decrease)
+                po.priority.incdec = -po.priority.incdec;
+        }
+    }
+
+    // interpret the "what" argument depending on input arguments
+    switch(po.what)
+    {
+        case ProgramOptions::ReniceWhat::pid:
+        {
+            const char *nptr = whatstring.c_str();
+            char *endptr;
+            po.target_pid = strtoul(nptr, &endptr, 10);
+            if (endptr == nptr)
+            {
+                std::cerr<<"Process ID must be numerical. "
+                    "Add /E or /A switch to look up a process by its executable name.";
+                return false;
+            }
+
+            break;
+        }
+        case ProgramOptions::ReniceWhat::exe_all:
+        {
+            po.target_str = whatstring;
+            std::cout<<"after\n";
+            break;
+        }
+    }
+
     return true;
 }
 
@@ -354,7 +437,7 @@ void display_version()
 int main(int argc, char *argv[])
 {
     ProgramOptions po;
-    
+
     if (!read_args(po, argc, argv))
     {
         display_help();
@@ -381,33 +464,26 @@ int main(int argc, char *argv[])
     // vector for the target PID's
     std::vector<DWORD> target_pids;
 
+
     switch(po.what)
     {
         case ProgramOptions::ReniceWhat::pid:
         {
-            const char *nptr = po.whatstring.c_str();
-            char *endptr;
-            DWORD pid = strtoul(nptr, &endptr, 10);
-            if (endptr == nptr)
+            if (all_pids.end() == 
+                std::find(all_pids.begin(), all_pids.end(), po.target_pid)
+            )
             {
-                std::cerr<<"Process ID must be numerical. "
-                    "Add /E or /A switch to look up a process by its executable name.";
-                return EXIT_FAILURE;
-            }
-            
-            if (all_pids.end() == std::find(all_pids.begin(), all_pids.end(), pid))
-            {
-                std::cerr<<"Process with ID "<<pid<<" does not exist.\n";
+                std::cerr<<"Process with ID "<<po.target_pid<<" does not exist.\n";
                 return EXIT_FAILURE;
             }
 
-            target_pids.push_back(pid);
+            target_pids.push_back(po.target_pid);
             break;
         }
         case ProgramOptions::ReniceWhat::exe_all:
         {
             for(DWORD pid: all_pids)
-                if (get_process_module_name(pid) == po.whatstring)
+                if (get_process_module_name(pid) == po.target_str)
                     target_pids.push_back(pid);
 
             break;
@@ -420,41 +496,16 @@ int main(int argc, char *argv[])
     {
         case ProgramOptions::ReniceHow::set:
         {
-            // capitalize 
-            std::string priostring_capitalized = po.priostring;
-            for (char& c: priostring_capitalized)
-                c = toupper(c);
-
-            // find priority class
-            auto p = get_priorityclass(priostring_capitalized.c_str());
-            if (p == PRIORITYCLASSES_END)
-            {
-                std::cerr<<"Unknown priority class "<<po.priostring<<".\n";
-                return EXIT_FAILURE;
-            }
-    
             for(DWORD pid: target_pids)
-                renice_one(pid, p->symbol);
+                renice_one(pid, po.priority.set);
             
             break;
         }
         case ProgramOptions::ReniceHow::increase:
         case ProgramOptions::ReniceHow::decrease:
         {
-            const char *nptr = po.priostring.c_str();
-            char *endptr;
-            int prio_incdec = strtoul(nptr, &endptr, 10);
-            if (endptr == nptr)
-            {
-                std::cerr<<"Priority for increasing or decreasing must be numerical.";
-                return EXIT_FAILURE;
-            }
-            
-            if(po.how == ProgramOptions::ReniceHow::decrease)
-                prio_incdec = -prio_incdec;
-            
             for(DWORD pid: target_pids)
-                incremental_renice_one(pid, prio_incdec);
+                incremental_renice_one(pid, po.priority.incdec);
             
             break;
         }
