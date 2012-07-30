@@ -1,0 +1,14 @@
+
+RM := del
+
+CXXFLAGS += --std=c++11
+LIBFLAGS := -lpsapi
+
+
+all: winrenice.exe
+
+winrenice.exe: winrenice.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBFLAGS)
+
+clean:
+	-$(RM) *.o *.exe
