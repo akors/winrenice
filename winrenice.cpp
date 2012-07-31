@@ -346,7 +346,7 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
             if (endptr == nptr)
             {
                 std::cerr<<"Process ID must be numerical. "
-                    "Add /E or /A switch to look up a process by its executable name.";
+                    "Add /E switch to look up processes by its executable name.\n";
                 return false;
             }
 
