@@ -427,7 +427,7 @@ void incremental_renice_one(
 {
     // get a handle to the process
     HANDLE process = OpenProcess(
-        PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, // The access to the process object.
+        PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, // The access to the process object.
         false, // If this value is TRUE, processes created by this process will inherit the handle.
         pid // The identifier of the local process to be opened. 
     );
