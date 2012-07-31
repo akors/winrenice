@@ -2,7 +2,7 @@
 RM := del
 
 CXXFLAGS += --std=c++11
-LIBFLAGS := -lpsapi
+LIBFLAGS := -shared -lpsapi
 
 
 all: winrenice.exe
