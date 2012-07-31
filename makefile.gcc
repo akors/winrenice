@@ -2,13 +2,16 @@
 RM := del
 
 CXXFLAGS += --std=c++11
-LIBFLAGS := -shared -lpsapi
+LIBFLAGS := -lpsapi
 
 
 all: winrenice.exe
 
 winrenice.exe: winrenice.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIBFLAGS)
+
+release: winrenice.exe
+	strip --strip-unneeded $<
 
 clean:
 	-$(RM) *.o *.exe
