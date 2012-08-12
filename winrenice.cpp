@@ -82,6 +82,7 @@ const std::size_t PRIORITYCLASSES_LENGTH =
 const PriorityClass* PRIORITYCLASSES_END =
     PRIORITYCLASSES + PRIORITYCLASSES_LENGTH;
 
+static bool debugging_enabled = false;
 
 
 const PriorityClass* get_priorityclass(const ci_string& name)
@@ -265,6 +266,13 @@ bool read_args(ProgramOptions& po, int argc, char *argv[])
             po.what = ProgramOptions::ReniceWhat::exe_all;
             continue;
         }
+
+		// undocumented. PSSSHHT!
+		if (get_switch(argv[currArg]) == 'g')
+        {
+            debugging_enabled = true;
+            continue;
+        }
         
         // anything else is not accepted
         if (get_switch(argv[currArg]))
@@ -370,7 +378,15 @@ ci_string get_process_module_name(DWORD pid)
         pid // The identifier of the local process to be opened. 
     );
     if(process == NULL)
+	{
+		if (debugging_enabled)
+		{
+			std::cerr<<"Failed to open process "
+	            <<pid<<". ";
+			cerr_last_error();
+		}
         return ci_string();
+	}
 
     const std::size_t BASENAME_MAX = 512;
     char lpBaseName[BASENAME_MAX];
@@ -378,9 +394,12 @@ ci_string get_process_module_name(DWORD pid)
     std::size_t len = GetModuleBaseName(process,NULL, lpBaseName, BASENAME_MAX);
     if (!len)
     {
-        std::cerr<<"Failed to retrieve executable name for process "
-            <<pid<<". ";
-        cerr_last_error();
+		if (debugging_enabled)
+        {
+			std::cerr<<"Failed to retrieve executable name for process "
+	            <<pid<<". ";
+			cerr_last_error();
+		}
         return ci_string();
     }
         
